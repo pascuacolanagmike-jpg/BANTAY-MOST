@@ -1,0 +1,934 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>BANTAY-MOS | Bioacoustic Analysis Workstation</title>
+    <script src="https://cdn.tailwindcss.com"></script>
+    <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css" />
+    <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
+    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600&family=JetBrains+Mono:wght@400;500&display=swap" rel="stylesheet">
+    <style>
+        :root { --bg: #1a1d21; --panel: #23272b; --border: #383d42; --accent: #4a9d7f; }
+        body { background: var(--bg); color: #d4d7da; font-family: 'Inter', sans-serif; overflow: hidden; }
+        .mono { font-family: 'JetBrains Mono', monospace; }
+        .panel { background: var(--panel); border: 1px solid var(--border); }
+        .panel-header { background: #2a2e33; border-bottom: 1px solid var(--border); padding: 6px 12px; font-size: 11px; font-weight: 600; text-transform: uppercase; letter-spacing: 0.05em; color: #8a9099; }
+        canvas { display: block; }
+        .toolbar-btn { padding: 6px 12px; font-size: 12px; border: 1px solid var(--border); background: #2a2e33; color: #d4d7da; border-radius: 3px; transition: all 0.15s; }
+        .toolbar-btn:hover { background: #343a40; border-color: #4a5055; }
+        .toolbar-btn.active { background: var(--accent); color: white; border-color: var(--accent); }
+        .toolbar-btn.rec { background: #b91c1c; color: white; border-color: #b91c1c; }
+        .toolbar-btn:disabled { opacity: 0.4; cursor: not-allowed; }
+        select, input[type=range] { background: #2a2e33; border: 1px solid var(--border); color: #d4d7da; padding: 4px 8px; border-radius: 3px; font-size: 12px; font-family: 'JetBrains Mono', monospace; }
+        select:focus { outline: 1px solid var(--accent); }
+        .data-row { display: flex; justify-content: space-between; padding: 4px 0; border-bottom: 1px solid #2a2e33; font-size: 12px; }
+        .data-label { color: #8a9099; }
+        .data-value { font-family: 'JetBrains Mono', monospace; color: #e8ebee; font-weight: 500; }
+        #map { height: 180px; filter: invert(0.9) hue-rotate(180deg) brightness(0.85); }
+        .scrollable { overflow-y: auto; }
+        .scrollable::-webkit-scrollbar { width: 6px; }
+        .scrollable::-webkit-scrollbar-track { background: #23272b; }
+        .scrollable::-webkit-scrollbar-thumb { background: #4a5055; border-radius: 3px; }
+        .status-dot { display: inline-block; width: 8px; height: 8px; border-radius: 50%; margin-right: 6px; }
+        .status-dot.offline { background: #6b7280; }
+        .status-dot.active { background: #10b981; animation: pulse 1.5s infinite; }
+        @keyframes pulse { 0%, 100% { opacity: 1; } 50% { opacity: 0.4; } }
+        table { width: 100%; border-collapse: collapse; font-size: 11px; }
+        thead { background: #2a2e33; position: sticky; top: 0; }
+        th { text-align: left; padding: 6px 8px; color: #8a9099; font-weight: 600; text-transform: uppercase; font-size: 10px; letter-spacing: 0.05em; border-bottom: 1px solid var(--border); }
+        td { padding: 5px 8px; border-bottom: 1px solid #2a2e33; font-family: 'JetBrains Mono', monospace; }
+        tbody tr:hover { background: #2a2e33; cursor: pointer; }
+        #selection-canvas { position: absolute; top: 0; left: 0; pointer-events: none; }
+        .crosshair-info { position: absolute; top: 4px; right: 8px; background: rgba(26,29,33,0.9); border: 1px solid var(--border); padding: 4px 8px; font-size: 11px; font-family: 'JetBrains Mono', monospace; border-radius: 3px; }
+    </style>
+</head>
+<body class="h-screen flex flex-col">
+
+    <!-- TOP TOOLBAR -->
+    <header class="panel flex items-center px-4 py-2 border-b flex-shrink-0" style="border-color: var(--border);">
+        <div class="flex items-center mr-6">
+            <h1 class="text-base font-semibold tracking-tight text-gray-200">BANTAY-MOS</h1>
+            <span class="text-xs text-gray-500 ml-2 mono">v2.0</span>
+        </div>
+        
+        <div class="flex items-center gap-2 mr-6">
+            <button id="start-btn" class="toolbar-btn">Initialize</button>
+            <button id="export-session-btn" class="toolbar-btn" disabled>Export Session</button>
+            <button id="export-selections-btn" class="toolbar-btn" disabled>Export Selections</button>
+            <button id="clear-btn" class="toolbar-btn">Clear</button>
+        </div>
+
+        <div class="flex items-center gap-3 mr-6">
+            <label class="text-xs text-gray-400">FFT</label>
+            <select id="fft-select" class="w-20">
+                <option value="512">512</option>
+                <option value="1024">1024</option>
+                <option value="2048" selected>2048</option>
+                <option value="4096">4096</option>
+                <option value="8192">8192</option>
+            </select>
+            <label class="text-xs text-gray-400">Map</label>
+            <select id="cmap-select" class="w-24">
+                <option value="jet" selected>Jet</option>
+                <option value="viridis">Viridis</option>
+                <option value="hot">Hot</option>
+                <option value="gray">Grayscale</option>
+            </select>
+        </div>
+
+        <div class="ml-auto flex items-center gap-2">
+            <span class="status-dot offline" id="status-dot"></span>
+            <span class="text-xs mono text-gray-500" id="status-text">STANDBY</span>
+        </div>
+    </header>
+
+    <!-- MAIN CONTENT -->
+    <div class="flex-1 flex overflow-hidden">
+        
+        <!-- LEFT: ANALYSIS AREA -->
+        <div class="flex-1 flex flex-col overflow-hidden">
+            
+            <!-- WAVEFORM PANEL -->
+            <div class="panel m-2 mb-1 flex flex-col" style="height: 130px; flex-shrink: 0;">
+                <div class="panel-header flex justify-between">
+                    <span>Waveform (Time Domain)</span>
+                    <span id="waveform-info" class="mono text-gray-500">0.0s — 0.0s</span>
+                </div>
+                <div class="flex-1 relative">
+                    <canvas id="waveform-canvas" class="absolute inset-0 w-full h-full"></canvas>
+                </div>
+            </div>
+
+            <!-- SPECTROGRAM PANEL -->
+            <div class="panel mx-2 mb-2 flex flex-col flex-1 overflow-hidden">
+                <div class="panel-header flex justify-between">
+                    <span>Spectrogram (Frequency Domain)</span>
+                    <span id="spectrogram-info" class="mono text-gray-500">0 - 8000 Hz | 0.0s window</span>
+                </div>
+                <div class="flex-1 relative overflow-hidden" id="spectrogram-container">
+                    <canvas id="spectrogram-canvas" class="absolute inset-0 w-full h-full"></canvas>
+                    <canvas id="selection-canvas" class="absolute inset-0 w-full h-full"></canvas>
+                    <div id="crosshair-info" class="crosshair-info hidden"></div>
+                </div>
+            </div>
+        </div>
+
+        <!-- RIGHT SIDEBAR -->
+        <div class="w-80 flex flex-col overflow-hidden border-l" style="border-color: var(--border);">
+            
+            <div class="scrollable flex-1">
+                
+                <!-- MEASUREMENTS -->
+                <div class="panel m-2">
+                    <div class="panel-header">Selection Measurements</div>
+                    <div class="p-3">
+                        <div id="measurements-empty" class="text-xs text-gray-500 italic py-4 text-center">No selection. Drag on the spectrogram to measure.</div>
+                        <div id="measurements-data" class="hidden">
+                            <div class="data-row"><span class="data-label">Start Time</span><span class="data-value" id="m-start">—</span></div>
+                            <div class="data-row"><span class="data-label">End Time</span><span class="data-value" id="m-end">—</span></div>
+                            <div class="data-row"><span class="data-label">Duration</span><span class="data-value" id="m-duration">—</span></div>
+                            <div class="data-row"><span class="data-label">Low Freq.</span><span class="data-value" id="m-low">—</span></div>
+                            <div class="data-row"><span class="data-label">High Freq.</span><span class="data-value" id="m-high">—</span></div>
+                            <div class="data-row"><span class="data-label">Bandwidth</span><span class="data-value" id="m-bw">—</span></div>
+                            <div class="data-row"><span class="data-label">Peak Freq.</span><span class="data-value" id="m-peak-freq">—</span></div>
+                            <div class="data-row" style="border-bottom: none;"><span class="data-label">Peak Amp.</span><span class="data-value" id="m-peak-amp">—</span></div>
+                        </div>
+                    </div>
+                </div>
+
+                <!-- LIVE DETECTOR -->
+                <div class="panel m-2">
+                    <div class="panel-header">Live Classifier</div>
+                    <div class="p-3">
+                        <div id="classifier-result" class="mono text-xs p-2 rounded" style="background: #2a2e33; color: #8a9099; text-align: center; letter-spacing: 0.05em;">STANDBY</div>
+                        <div class="mt-3">
+                            <div class="data-row"><span class="data-label">Dominant Freq.</span><span class="data-value" id="dominant-freq">— Hz</span></div>
+                            <div class="data-row"><span class="data-label">Wingbeat Index</span><span class="data-value" id="wingbeat-index">0.0</span></div>
+                            <div class="data-row" style="border-bottom: none;"><span class="data-label">Vector Risk</span><span class="data-value" id="risk-level">—</span></div>
+                        </div>
+                    </div>
+                </div>
+
+                <!-- GPS -->
+                <div class="panel m-2">
+                    <div class="panel-header">Location</div>
+                    <div id="map"></div>
+                    <div class="p-3">
+                        <div class="data-row"><span class="data-label">Latitude</span><span class="data-value" id="lat-val">—</span></div>
+                        <div class="data-row" style="border-bottom: none;"><span class="data-label">Longitude</span><span class="data-value" id="lon-val">—</span></div>
+                    </div>
+                </div>
+
+                <!-- WEATHER -->
+                <div class="panel m-2">
+                    <div class="panel-header">Environmental Data</div>
+                    <div class="p-3">
+                        <div class="data-row"><span class="data-label">Temperature</span><span class="data-value" id="temp-val">—</span></div>
+                        <div class="data-row"><span class="data-label">Humidity</span><span class="data-value" id="humidity-val">—</span></div>
+                        <div class="data-row"><span class="data-label">Wind Speed</span><span class="data-value" id="wind-val">—</span></div>
+                        <div class="data-row"><span class="data-label">Wind Dir.</span><span class="data-value" id="wind-dir-val">—</span></div>
+                        <div class="data-row" style="border-bottom: none;"><span class="data-label">Precipitation</span><span class="data-value" id="precip-val">—</span></div>
+                    </div>
+                </div>
+
+            </div>
+        </div>
+    </div>
+
+    <!-- BOTTOM: SELECTION TABLE -->
+    <div class="panel mx-2 mb-2 flex flex-col" style="height: 160px; flex-shrink: 0;">
+        <div class="panel-header flex justify-between">
+            <span>Selection Table</span>
+            <span id="sel-count" class="mono text-gray-500">0 selections</span>
+        </div>
+        <div class="scrollable flex-1">
+            <table>
+                <thead>
+                    <tr>
+                        <th>#</th>
+                        <th>Start (s)</th>
+                        <th>End (s)</th>
+                        <th>Dur. (s)</th>
+                        <th>Low (Hz)</th>
+                        <th>High (Hz)</th>
+                        <th>BW (Hz)</th>
+                        <th>Peak (Hz)</th>
+                        <th>Amp</th>
+                        <th>ID</th>
+                    </tr>
+                </thead>
+                <tbody id="selection-tbody">
+                    <tr><td colspan="10" class="text-center text-gray-500 italic" style="padding: 20px;">No selections yet. Drag on the spectrogram to begin.</td></tr>
+                </tbody>
+            </table>
+        </div>
+    </div>
+
+    <script>
+        // ============================================================
+        // BANTAY-MOS v2.0 — Bioacoustic Analysis Workstation
+        // ============================================================
+
+        // --- State ---
+        let audioContext, analyser, dataArray, timeDomainArray, source, mediaStream;
+        let isRecording = false;
+        let recordingStartTime = 0;
+        
+        let spectrogramData = []; // Array of { freq: Uint8Array, time: number }
+        let waveformData = [];    // Array of { min, max, time: number }
+        const MAX_COLUMNS = 1000;
+        const MAX_FREQ = 8000;
+        
+        let selections = [];
+        let currentSelection = null; // { x1, y1, x2, y2 } in pixels
+        let isSelecting = false;
+        let selectionStart = null;
+        
+        let cmap = 'jet';
+        let lastDominantFreq = 0;
+        let lastClassification = 'BASELINE';
+        
+        let currentLat = null, currentLon = null;
+        let currentWeather = { temp: null, wind: null, windDir: null, humidity: null, precip: null };
+        let map, marker;
+        let sessionLog = [];
+        let logInterval, classifyInterval;
+
+        // --- Canvas Elements ---
+        let wfCanvas, wfCtx, specCanvas, specCtx, selCanvas, selCtx;
+        let specContainer, crosshairInfo;
+
+        // ============================================================
+        // INITIALIZATION
+        // ============================================================
+        window.addEventListener('DOMContentLoaded', () => {
+            wfCanvas = document.getElementById('waveform-canvas');
+            wfCtx = wfCanvas.getContext('2d');
+            specCanvas = document.getElementById('spectrogram-canvas');
+            specCtx = specCanvas.getContext('2d');
+            selCanvas = document.getElementById('selection-canvas');
+            selCtx = selCanvas.getContext('2d');
+            specContainer = document.getElementById('spectrogram-container');
+            crosshairInfo = document.getElementById('crosshair-info');
+
+            initMap();
+            resizeCanvases();
+            window.addEventListener('resize', resizeCanvases);
+
+            // Toolbar
+            document.getElementById('start-btn').addEventListener('click', toggleSystem);
+            document.getElementById('export-session-btn').addEventListener('click', exportSession);
+            document.getElementById('export-selections-btn').addEventListener('click', exportSelections);
+            document.getElementById('clear-btn').addEventListener('click', clearAll);
+            document.getElementById('fft-select').addEventListener('change', handleFFTChange);
+            document.getElementById('cmap-select').addEventListener('change', (e) => { cmap = e.target.value; });
+
+            // Selection events on the spectrogram container
+            specContainer.addEventListener('mousedown', onSelectionStart);
+            window.addEventListener('mousemove', onSelectionMove);
+            window.addEventListener('mouseup', onSelectionEnd);
+            specContainer.addEventListener('mousemove', onCrosshairMove);
+            specContainer.addEventListener('mouseleave', () => { crosshairInfo.classList.add('hidden'); });
+        });
+
+        function resizeCanvases() {
+            const dpr = window.devicePixelRatio || 1;
+            
+            const wfRect = wfCanvas.parentElement.getBoundingClientRect();
+            wfCanvas.width = wfRect.width * dpr;
+            wfCanvas.height = wfRect.height * dpr;
+            wfCtx.scale(dpr, dpr);
+            wfCanvas.style.width = wfRect.width + 'px';
+            wfCanvas.style.height = wfRect.height + 'px';
+
+            const specRect = specCanvas.parentElement.getBoundingClientRect();
+            specCanvas.width = specRect.width * dpr;
+            specCanvas.height = specRect.height * dpr;
+            specCtx.scale(dpr, dpr);
+            specCanvas.style.width = specRect.width + 'px';
+            specCanvas.style.height = specRect.height + 'px';
+
+            selCanvas.width = specRect.width * dpr;
+            selCanvas.height = specRect.height * dpr;
+            selCtx.scale(dpr, dpr);
+            selCanvas.style.width = specRect.width + 'px';
+            selCanvas.style.height = specRect.height + 'px';
+
+            // Redraw
+            drawSpectrogram();
+            drawWaveform();
+        }
+
+        // ============================================================
+        // SYSTEM CONTROL
+        // ============================================================
+        async function toggleSystem() {
+            if (isRecording) stopSystem(); else await startSystem();
+        }
+
+        async function startSystem() {
+            try {
+                mediaStream = await navigator.mediaDevices.getUserMedia({ audio: { echoCancellation: false, noiseSuppression: false, autoGainControl: false } });
+                audioContext = new (window.AudioContext || window.webkitAudioContext)();
+                analyser = audioContext.createAnalyser();
+                const fftSize = parseInt(document.getElementById('fft-select').value);
+                analyser.fftSize = fftSize;
+                analyser.smoothingTimeConstant = 0.75;
+                
+                source = audioContext.createMediaStreamSource(mediaStream);
+                source.connect(analyser);
+                dataArray = new Uint8Array(analyser.frequencyBinCount);
+                timeDomainArray = new Uint8Array(analyser.fftSize);
+
+                recordingStartTime = performance.now();
+                isRecording = true;
+
+                document.getElementById('status-text').textContent = 'RECORDING';
+                document.getElementById('status-dot').className = 'status-dot active';
+                document.getElementById('start-btn').textContent = 'Stop';
+                document.getElementById('start-btn').className = 'toolbar-btn rec';
+                document.getElementById('export-session-btn').disabled = false;
+
+                spectrogramData = [];
+                waveformData = [];
+                selections = [];
+
+                startGPS();
+                renderLoop();
+                classifyInterval = setInterval(classifyAudio, 500);
+                logInterval = setInterval(logSession, 5000);
+
+            } catch (err) {
+                console.error("Microphone error:", err);
+                alert("Microphone access required for BANTAY-MOS.");
+            }
+        }
+
+        function stopSystem() {
+            if (source) source.disconnect();
+            if (audioContext) audioContext.close();
+            if (mediaStream) mediaStream.getTracks().forEach(t => t.stop());
+            if (classifyInterval) clearInterval(classifyInterval);
+            if (logInterval) clearInterval(logInterval);
+
+            isRecording = false;
+            document.getElementById('status-text').textContent = 'STANDBY';
+            document.getElementById('status-dot').className = 'status-dot offline';
+            document.getElementById('start-btn').textContent = 'Initialize';
+            document.getElementById('start-btn').className = 'toolbar-btn';
+            document.getElementById('classifier-result').textContent = 'STANDBY';
+            document.getElementById('classifier-result').style.background = '#2a2e33';
+            document.getElementById('classifier-result').style.color = '#8a9099';
+        }
+
+        function clearAll() {
+            spectrogramData = [];
+            waveformData = [];
+            selections = [];
+            sessionLog = [];
+            renderSelectionTable();
+            clearMeasurements();
+            drawSpectrogram();
+            drawWaveform();
+        }
+
+        function handleFFTChange() {
+            if (analyser) {
+                analyser.fftSize = parseInt(document.getElementById('fft-select').value);
+                dataArray = new Uint8Array(analyser.frequencyBinCount);
+                timeDomainArray = new Uint8Array(analyser.fftSize);
+            }
+        }
+
+        // ============================================================
+        // MAIN RENDER LOOP
+        // ============================================================
+        function renderLoop() {
+            if (!isRecording) return;
+            requestAnimationFrame(renderLoop);
+
+            const now = performance.now();
+            const elapsed = (now - recordingStartTime) / 1000;
+
+            // Capture frequency data
+            analyser.getByteFrequencyData(dataArray);
+            spectrogramData.push({ freq: new Uint8Array(dataArray), time: elapsed });
+            if (spectrogramData.length > MAX_COLUMNS) spectrogramData.shift();
+
+            // Capture time-domain data (downsample to min/max for waveform)
+            analyser.getByteTimeDomainData(timeDomainArray);
+            let min = 255, max = 0;
+            for (let i = 0; i < timeDomainArray.length; i++) {
+                const v = timeDomainArray[i];
+                if (v < min) min = v;
+                if (v > max) max = v;
+            }
+            waveformData.push({ min, max, time: elapsed });
+            if (waveformData.length > MAX_COLUMNS) waveformData.shift();
+
+            drawSpectrogram();
+            drawWaveform();
+        }
+
+        // ============================================================
+        // SPECTROGRAM RENDERING
+        // ============================================================
+        function drawSpectrogram() {
+            const dpr = window.devicePixelRatio || 1;
+            const w = specCanvas.width / dpr;
+            const h = specCanvas.height / dpr;
+
+            specCtx.fillStyle = '#0a0c0e';
+            specCtx.fillRect(0, 0, w, h);
+
+            if (spectrogramData.length === 0 || !audioContext) return;
+
+            const nyquist = audioContext.sampleRate / 2;
+            const binsToDisplay = Math.floor((MAX_FREQ / nyquist) * dataArray.length);
+            const columnWidth = w / MAX_COLUMNS;
+            const rowHeight = h / binsToDisplay;
+            const imageData = specCtx.createImageData(Math.ceil(columnWidth), Math.ceil(rowHeight));
+
+            // Simple optimized approach: draw 1px columns
+            for (let x = 0; x < spectrogramData.length; x++) {
+                const slice = spectrogramData[x].freq;
+                for (let y = 0; y < binsToDisplay; y++) {
+                    const value = slice[y];
+                    const [r, g, b] = applyColormap(value, cmap);
+                    specCtx.fillStyle = `rgb(${r},${g},${b})`;
+                    specCtx.fillRect(x * columnWidth, h - (y + 1) * rowHeight, columnWidth + 1, rowHeight + 1);
+                }
+            }
+        }
+
+        function applyColormap(v, map) {
+            // v is 0-255
+            const t = v / 255;
+            if (map === 'gray') {
+                const c = Math.floor(t * 255);
+                return [c, c, c];
+            }
+            if (map === 'hot') {
+                let r, g, b;
+                if (t < 0.33) { r = Math.floor(t * 3 * 255); g = 0; b = 0; }
+                else if (t < 0.66) { r = 255; g = Math.floor((t - 0.33) * 3 * 255); b = 0; }
+                else { r = 255; g = 255; b = Math.floor((t - 0.66) * 3 * 255); }
+                return [r, g, b];
+            }
+            if (map === 'jet') {
+                // Black -> Purple -> Magenta -> Orange -> Yellow
+                let r, g, b;
+                if (t < 0.12) { r = t * 8 * 130; g = 0; b = t * 8 * 180; }
+                else if (t < 0.47) { r = 100 + (t - 0.12) * 2.85 * 155; g = 0; b = 180 + (t - 0.12) * 2.85 * 75; }
+                else if (t < 0.78) { r = 255; g = (t - 0.47) * 3.2 * 200; b = 255 - (t - 0.47) * 3.2 * 255; }
+                else { r = 255; g = 200 + (t - 0.78) * 4.5 * 55; b = (t - 0.78) * 4.5 * 200; }
+                return [Math.min(255, Math.floor(r)), Math.min(255, Math.floor(g)), Math.min(255, Math.floor(b))];
+            }
+            if (map === 'viridis') {
+                // Approximate viridis via 5-point interpolation
+                const stops = [
+                    [68, 1, 84], [59, 82, 139], [33, 145, 140], [94, 201, 98], [253, 231, 37]
+                ];
+                const idx = t * (stops.length - 1);
+                const i = Math.floor(idx);
+                const frac = idx - i;
+                if (i >= stops.length - 1) return stops[stops.length - 1];
+                const a = stops[i], b = stops[i + 1];
+                return [
+                    Math.floor(a[0] + (b[0] - a[0]) * frac),
+                    Math.floor(a[1] + (b[1] - a[1]) * frac),
+                    Math.floor(a[2] + (b[2] - a[2]) * frac)
+                ];
+            }
+            return [0, 0, 0];
+        }
+
+        // ============================================================
+        // WAVEFORM RENDERING
+        // ============================================================
+        function drawWaveform() {
+            const dpr = window.devicePixelRatio || 1;
+            const w = wfCanvas.width / dpr;
+            const h = wfCanvas.height / dpr;
+            const mid = h / 2;
+
+            wfCtx.fillStyle = '#0a0c0e';
+            wfCtx.fillRect(0, 0, w, h);
+
+            // Center line
+            wfCtx.strokeStyle = '#2a2e33';
+            wfCtx.beginPath();
+            wfCtx.moveTo(0, mid);
+            wfCtx.lineTo(w, mid);
+            wfCtx.stroke();
+
+            if (waveformData.length === 0) return;
+
+            const columnWidth = w / MAX_COLUMNS;
+
+            wfCtx.strokeStyle = '#4a9d7f';
+            wfCtx.lineWidth = 1;
+            wfCtx.beginPath();
+
+            for (let x = 0; x < waveformData.length; x++) {
+                const d = waveformData[x];
+                // Convert 0-255 (centered at 128) to y coords
+                const yMax = mid - ((d.max - 128) / 128) * (mid - 2);
+                const yMin = mid - ((d.min - 128) / 128) * (mid - 2);
+                const xPos = x * columnWidth;
+                wfCtx.moveTo(xPos, yMin);
+                wfCtx.lineTo(xPos, yMax);
+            }
+            wfCtx.stroke();
+
+            // Update time info
+            if (waveformData.length > 0) {
+                const tStart = waveformData[0].time.toFixed(2);
+                const tEnd = waveformData[waveformData.length - 1].time.toFixed(2);
+                document.getElementById('waveform-info').textContent = `${tStart}s — ${tEnd}s`;
+                document.getElementById('spectrogram-info').textContent = `0 - ${MAX_FREQ} Hz | ${(tEnd - tStart).toFixed(1)}s window`;
+            }
+        }
+
+        // ============================================================
+        // SELECTION TOOL
+        // ============================================================
+        function onSelectionStart(e) {
+            if (!isRecording || spectrogramData.length === 0) return;
+            const rect = specContainer.getBoundingClientRect();
+            const x = e.clientX - rect.left;
+            const y = e.clientY - rect.top;
+            isSelecting = true;
+            selectionStart = { x, y };
+            currentSelection = { x1: x, y1: y, x2: x, y2: y };
+        }
+
+        function onSelectionMove(e) {
+            if (!isSelecting) return;
+            const rect = specContainer.getBoundingClientRect();
+            const x = Math.max(0, Math.min(rect.width, e.clientX - rect.left));
+            const y = Math.max(0, Math.min(rect.height, e.clientY - rect.top));
+            currentSelection.x2 = x;
+            currentSelection.y2 = y;
+            drawSelectionOverlay();
+        }
+
+        function onSelectionEnd(e) {
+            if (!isSelecting) return;
+            isSelecting = false;
+
+            const w = currentSelection.x2 - currentSelection.x1;
+            const h = currentSelection.y2 - currentSelection.y1;
+            if (Math.abs(w) < 5 || Math.abs(h) < 5) {
+                // Too small, treat as a click
+                currentSelection = null;
+                drawSelectionOverlay();
+                return;
+            }
+
+            const measurement = computeMeasurements(currentSelection);
+            if (measurement) {
+                measurement.id = 'S' + (selections.length + 1).toString().padStart(3, '0');
+                measurement.classification = lastClassification;
+                selections.push({ bounds: { ...currentSelection }, data: measurement });
+                renderMeasurementPanel(measurement);
+                renderSelectionTable();
+                document.getElementById('export-selections-btn').disabled = false;
+            }
+        }
+
+        function onCrosshairMove(e) {
+            if (!isRecording || spectrogramData.length === 0) return;
+            const rect = specContainer.getBoundingClientRect();
+            const x = e.clientX - rect.left;
+            const y = e.clientY - rect.top;
+
+            const freq = pixelToFreq(y);
+            const time = pixelToTime(x);
+
+            crosshairInfo.classList.remove('hidden');
+            crosshairInfo.textContent = `${time.toFixed(2)}s  |  ${freq.toFixed(0)} Hz`;
+
+            // Draw crosshair
+            drawSelectionOverlayWithCrosshair(x, y);
+        }
+
+        function pixelToFreq(y) {
+            if (!audioContext) return 0;
+            const dpr = window.devicePixelRatio || 1;
+            const h = specCanvas.height / dpr;
+            const nyquist = audioContext.sampleRate / 2;
+            const binsToDisplay = Math.floor((MAX_FREQ / nyquist) * dataArray.length);
+            const binIndex = Math.floor((h - y) / (h / binsToDisplay));
+            const clampedBin = Math.max(0, Math.min(binsToDisplay - 1, binIndex));
+            return clampedBin * (nyquist / dataArray.length);
+        }
+
+        function pixelToTime(x) {
+            const dpr = window.devicePixelRatio || 1;
+            const w = specCanvas.width / dpr;
+            const columnWidth = w / MAX_COLUMNS;
+            const dataIndex = Math.floor(x / columnWidth);
+            const clampedIdx = Math.max(0, Math.min(spectrogramData.length - 1, dataIndex));
+            if (spectrogramData.length === 0) return 0;
+            return spectrogramData[clampedIdx].time;
+        }
+
+        function drawSelectionOverlay() {
+            const dpr = window.devicePixelRatio || 1;
+            const w = selCanvas.width / dpr;
+            const h = selCanvas.height / dpr;
+            selCtx.clearRect(0, 0, w, h);
+
+            // Draw committed selections
+            selections.forEach((sel, idx) => {
+                const b = sel.bounds;
+                selCtx.strokeStyle = '#f59e0b';
+                selCtx.lineWidth = 1;
+                selCtx.strokeRect(b.x1, b.y1, b.x2 - b.x1, b.y2 - b.y1);
+                selCtx.fillStyle = 'rgba(245, 158, 11, 0.1)';
+                selCtx.fillRect(b.x1, b.y1, b.x2 - b.x1, b.y2 - b.y1);
+                // Label
+                selCtx.fillStyle = '#f59e0b';
+                selCtx.font = '11px JetBrains Mono';
+                selCtx.fillText(sel.data.id, b.x1 + 4, b.y1 + 14);
+            });
+
+            // Draw current in-progress selection
+            if (currentSelection) {
+                const b = currentSelection;
+                selCtx.strokeStyle = '#ffffff';
+                selCtx.lineWidth = 1;
+                selCtx.setLineDash([4, 3]);
+                selCtx.strokeRect(b.x1, b.y1, b.x2 - b.x1, b.y2 - b.y1);
+                selCtx.setLineDash([]);
+            }
+        }
+
+        function drawSelectionOverlayWithCrosshair(cx, cy) {
+            drawSelectionOverlay();
+            const dpr = window.devicePixelRatio || 1;
+            const w = selCanvas.width / dpr;
+            const h = selCanvas.height / dpr;
+            selCtx.strokeStyle = 'rgba(74, 157, 127, 0.5)';
+            selCtx.lineWidth = 1;
+            selCtx.beginPath();
+            selCtx.moveTo(0, cy); selCtx.lineTo(w, cy);
+            selCtx.moveTo(cx, 0); selCtx.lineTo(cx, h);
+            selCtx.stroke();
+        }
+
+        // ============================================================
+        // MEASUREMENT ENGINE
+        // ============================================================
+        function computeMeasurements(bounds) {
+            if (!audioContext || spectrogramData.length === 0) return null;
+            const dpr = window.devicePixelRatio || 1;
+            const w = specCanvas.width / dpr;
+            const h = specCanvas.height / dpr;
+
+            const x1 = Math.min(bounds.x1, bounds.x2);
+            const x2 = Math.max(bounds.x1, bounds.x2);
+            const y1 = Math.min(bounds.y1, bounds.y2);
+            const y2 = Math.max(bounds.y1, bounds.y2);
+
+            const columnWidth = w / MAX_COLUMNS;
+            const nyquist = audioContext.sampleRate / 2;
+            const binsToDisplay = Math.floor((MAX_FREQ / nyquist) * dataArray.length);
+            const rowHeight = h / binsToDisplay;
+
+            let colStart = Math.floor(x1 / columnWidth);
+            let colEnd = Math.floor(x2 / columnWidth);
+            colStart = Math.max(0, Math.min(spectrogramData.length - 1, colStart));
+            colEnd = Math.max(0, Math.min(spectrogramData.length - 1, colEnd));
+            if (colEnd < colStart) [colStart, colEnd] = [colEnd, colStart];
+
+            let binTop = Math.floor((h - y1) / rowHeight);
+            let binBottom = Math.floor((h - y2) / rowHeight);
+            binTop = Math.max(0, Math.min(binsToDisplay - 1, binTop));
+            binBottom = Math.max(0, Math.min(binsToDisplay - 1, binBottom));
+            if (binTop < binBottom) [binTop, binBottom] = [binBottom, binTop];
+
+            const startTime = spectrogramData[colStart].time;
+            const endTime = spectrogramData[colEnd].time;
+            const lowFreq = binBottom * (nyquist / dataArray.length);
+            const highFreq = binTop * (nyquist / dataArray.length);
+
+            // Scan for peak
+            let peakAmp = 0;
+            let peakFreq = 0;
+            for (let c = colStart; c <= colEnd; c++) {
+                const slice = spectrogramData[c].freq;
+                for (let b = binBottom; b <= binTop; b++) {
+                    if (slice[b] > peakAmp) {
+                        peakAmp = slice[b];
+                        peakFreq = b * (nyquist / dataArray.length);
+                    }
+                }
+            }
+
+            return {
+                startTime: startTime.toFixed(3),
+                endTime: endTime.toFixed(3),
+                duration: (endTime - startTime).toFixed(3),
+                lowFreq: lowFreq.toFixed(1),
+                highFreq: highFreq.toFixed(1),
+                bandwidth: (highFreq - lowFreq).toFixed(1),
+                peakFreq: peakFreq.toFixed(1),
+                peakAmp: peakAmp
+            };
+        }
+
+        function renderMeasurementPanel(m) {
+            document.getElementById('measurements-empty').classList.add('hidden');
+            document.getElementById('measurements-data').classList.remove('hidden');
+            document.getElementById('m-start').textContent = m.startTime + ' s';
+            document.getElementById('m-end').textContent = m.endTime + ' s';
+            document.getElementById('m-duration').textContent = m.duration + ' s';
+            document.getElementById('m-low').textContent = m.lowFreq + ' Hz';
+            document.getElementById('m-high').textContent = m.highFreq + ' Hz';
+            document.getElementById('m-bw').textContent = m.bandwidth + ' Hz';
+            document.getElementById('m-peak-freq').textContent = m.peakFreq + ' Hz';
+            document.getElementById('m-peak-amp').textContent = m.peakAmp;
+        }
+
+        function clearMeasurements() {
+            document.getElementById('measurements-empty').classList.remove('hidden');
+            document.getElementById('measurements-data').classList.add('hidden');
+        }
+
+        function renderSelectionTable() {
+            const tbody = document.getElementById('selection-tbody');
+            document.getElementById('sel-count').textContent = selections.length + ' selection' + (selections.length === 1 ? '' : 's');
+            if (selections.length === 0) {
+                tbody.innerHTML = '<tr><td colspan="10" class="text-center text-gray-500 italic" style="padding: 20px;">No selections yet. Drag on the spectrogram to begin.</td></tr>';
+                return;
+            }
+            tbody.innerHTML = selections.map(s => {
+                const d = s.data;
+                return `<tr onclick="focusSelection('${d.id}')">
+                    <td style="color:#f59e0b">${d.id}</td>
+                    <td>${d.startTime}</td>
+                    <td>${d.endTime}</td>
+                    <td>${d.duration}</td>
+                    <td>${d.lowFreq}</td>
+                    <td>${d.highFreq}</td>
+                    <td>${d.bandwidth}</td>
+                    <td>${d.peakFreq}</td>
+                    <td>${d.peakAmp}</td>
+                    <td style="color:#8a9099">${d.classification}</td>
+                </tr>`;
+            }).join('');
+        }
+
+        window.focusSelection = function(id) {
+            const s = selections.find(x => x.data.id === id);
+            if (!s) return;
+            renderMeasurementPanel(s.data);
+        };
+
+        // ============================================================
+        // LIVE CLASSIFIER
+        // ============================================================
+        function classifyAudio() {
+            if (!isRecording) return;
+            analyser.getByteFrequencyData(dataArray);
+            const nyquist = audioContext.sampleRate / 2;
+            const binWidth = nyquist / dataArray.length;
+
+            let peakAmp = 0, peakBin = 0, totalEnergy = 0;
+            for (let i = 0; i < dataArray.length; i++) {
+                totalEnergy += dataArray[i];
+                if (dataArray[i] > peakAmp) { peakAmp = dataArray[i]; peakBin = i; }
+            }
+            const peakFreq = peakBin * binWidth;
+            const avgEnergy = totalEnergy / dataArray.length;
+            const tonalityRatio = peakAmp / (avgEnergy + 1);
+            const isCulicidaeFreq = peakFreq >= 350 && peakFreq <= 650;
+
+            let lowFreqEnergy = 0;
+            const lowBins = Math.floor(150 / binWidth);
+            for (let i = 0; i < lowBins; i++) lowFreqEnergy += dataArray[i];
+            const lowFreqRatio = lowFreqEnergy / (totalEnergy + 1);
+
+            lastDominantFreq = peakFreq;
+            document.getElementById('dominant-freq').textContent = peakFreq.toFixed(0) + ' Hz';
+
+            let classification, bg, fg;
+            if (peakAmp < 50) {
+                classification = 'BASELINE'; bg = '#1e3a8a'; fg = '#bfdbfe';
+            } else if (tonalityRatio > 3.5 && isCulicidaeFreq && lowFreqRatio < 0.5) {
+                classification = 'CULICIDAE'; bg = '#064e3b'; fg = '#a7f3d0';
+            } else if (lowFreqRatio > 0.6 || tonalityRatio < 2.0) {
+                classification = 'INTERFERENCE'; bg = '#1f2937'; fg = '#9ca3af';
+            } else {
+                classification = 'INDETERMINATE'; bg = '#78350f'; fg = '#fde68a';
+            }
+            lastClassification = classification;
+
+            const el = document.getElementById('classifier-result');
+            el.textContent = classification === 'CULICIDAE' ? 'CULICIDAE SIGNATURE' : classification;
+            el.style.background = bg;
+            el.style.color = fg;
+
+            let wingbeat = classification === 'CULICIDAE' ? Math.min(100, Math.round((peakAmp / 255) * 100)) : 0;
+            document.getElementById('wingbeat-index').textContent = wingbeat;
+            updateRisk(wingbeat);
+        }
+
+        function updateRisk(wingbeat) {
+            if (!currentWeather.temp || !currentWeather.wind) return;
+            let score = wingbeat;
+            if (currentWeather.temp < 15) score -= 50;
+            else if (currentWeather.temp > 20 && currentWeather.temp < 35) score += 20;
+            if (currentWeather.wind > 15) score -= 40;
+            else if (currentWeather.wind < 5) score += 20;
+            const hour = new Date().getHours();
+            if ((hour >= 5 && hour <= 8) || (hour >= 17 && hour <= 20)) score += 20;
+
+            let risk = 'LOW', color = '#10b981';
+            if (score > 80) { risk = 'CRITICAL'; color = '#ef4444'; }
+            else if (score > 50) { risk = 'HIGH'; color = '#f97316'; }
+            else if (score > 20) { risk = 'MODERATE'; color = '#f59e0b'; }
+            const el = document.getElementById('risk-level');
+            el.textContent = risk;
+            el.style.color = color;
+        }
+
+        // ============================================================
+        // GPS & WEATHER
+        // ============================================================
+        function initMap() {
+            map = L.map('map', { zoomControl: false }).setView([14.5995, 120.9842], 13);
+            L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', { attribution: '&copy; OSM' }).addTo(map);
+        }
+
+        function startGPS() {
+            if (!navigator.geolocation) return;
+            navigator.geolocation.watchPosition(pos => {
+                currentLat = pos.coords.latitude;
+                currentLon = pos.coords.longitude;
+                document.getElementById('lat-val').textContent = currentLat.toFixed(6);
+                document.getElementById('lon-val').textContent = currentLon.toFixed(6);
+                map.setView([currentLat, currentLon], 15);
+                if (marker) map.removeLayer(marker);
+                marker = L.marker([currentLat, currentLon]).addTo(map);
+                fetchWeather(currentLat, currentLon);
+            }, err => console.error(err), { enableHighAccuracy: true });
+        }
+
+        async function fetchWeather(lat, lon) {
+            try {
+                const r = await fetch(`https://api.open-meteo.com/v1/forecast?latitude=${lat}&longitude=${lon}&current=temperature_2m,relative_humidity_2m,precipitation,wind_speed_10m,wind_direction_10m&timezone=auto`);
+                const data = await r.json();
+                currentWeather.temp = data.current.temperature_2m;
+                currentWeather.wind = data.current.wind_speed_10m;
+                currentWeather.windDir = data.current.wind_direction_10m;
+                currentWeather.humidity = data.current.relative_humidity_2m;
+                currentWeather.precip = data.current.precipitation;
+                document.getElementById('temp-val').textContent = currentWeather.temp + ' °C';
+                document.getElementById('humidity-val').textContent = currentWeather.humidity + ' %';
+                document.getElementById('wind-val').textContent = currentWeather.wind + ' km/h';
+                document.getElementById('wind-dir-val').textContent = currentWeather.windDir + '° ' + getCardinal(currentWeather.windDir);
+                document.getElementById('precip-val').textContent = currentWeather.precip + ' mm';
+            } catch (e) { console.error(e); }
+        }
+
+        function getCardinal(deg) {
+            const dirs = ['N','NNE','NE','ENE','E','ESE','SE','SSE','S','SSW','SW','WSW','W','WNW','NW','NNW'];
+            return dirs[Math.round((deg % 360) / 22.5) % 16];
+        }
+
+        // ============================================================
+        // SESSION LOGGING
+        // ============================================================
+        function logSession() {
+            if (!isRecording) return;
+            sessionLog.push({
+                timestamp: new Date().toISOString(),
+                lat: currentLat, lon: currentLon,
+                temp: currentWeather.temp, wind: currentWeather.wind,
+                windDir: currentWeather.windDir, humidity: currentWeather.humidity,
+                classification: lastClassification,
+                dominantFreq: lastDominantFreq.toFixed(1),
+                wingbeat: document.getElementById('wingbeat-index').textContent
+            });
+        }
+
+        // ============================================================
+        // CSV EXPORTS
+        // ============================================================
+        function downloadCSV(rows, filename) {
+            const csv = rows.join('\n');
+            const blob = new Blob([csv], { type: 'text/csv;charset=utf-8;' });
+            const url = URL.createObjectURL(blob);
+            const a = document.createElement('a');
+            a.href = url; a.download = filename;
+            document.body.appendChild(a); a.click();
+            document.body.removeChild(a);
+        }
+
+        function exportSelections() {
+            if (selections.length === 0) return alert('No selections to export.');
+            const headers = ['Selection ID','Start Time (s)','End Time (s)','Duration (s)','Low Freq (Hz)','High Freq (Hz)','Bandwidth (Hz)','Peak Freq (Hz)','Peak Amplitude','Classification'];
+            const rows = [headers.join(',')];
+            selections.forEach(s => {
+                const d = s.data;
+                rows.push(`${d.id},${d.startTime},${d.endTime},${d.duration},${d.lowFreq},${d.highFreq},${d.bandwidth},${d.peakFreq},${d.peakAmp},${d.classification}`);
+            });
+            downloadCSV(rows, `BANTAY-MOS_Selections_${new Date().toISOString().slice(0,10)}.csv`);
+        }
+
+        function exportSession() {
+            if (sessionLog.length === 0) return alert('No session data to export.');
+            const headers = ['Timestamp','Latitude','Longitude','Temperature (°C)','Wind Speed (km/h)','Wind Dir (°)','Humidity (%)','Classification','Dominant Freq (Hz)','Wingbeat Index'];
+            const rows = [headers.join(',')];
+            sessionLog.forEach(e => {
+                rows.push(`${e.timestamp},${e.lat},${e.lon},${e.temp},${e.wind},${e.windDir},${e.humidity},${e.classification},${e.dominantFreq},${e.wingbeat}`);
+            });
+            downloadCSV(rows, `BANTAY-MOS_Session_${new Date().toISOString().slice(0,10)}.csv`);
+        }
+    </script>
+</body>
+</html>
